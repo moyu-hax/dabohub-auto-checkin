@@ -59,6 +59,16 @@ def get_turnstile_coords(driver):
         return null;
     """)
 
+def has_turnstile_challenge(driver):
+    return driver.execute_script("""
+        var hasIframe = Array.from(document.querySelectorAll('iframe')).some(function(frame) {
+            var src = (frame.src || '').toLowerCase();
+            return src.includes('cloudflare') || src.includes('turnstile') || src.includes('challenges');
+        });
+        var hasInput = !!document.querySelector("input[name='cf-turnstile-response']");
+        return hasIframe || hasInput;
+    """)
+
 def os_hardware_click(x, y):
     try:
         result = subprocess.run(["xdotool", "search", "--onlyvisible", "--class", "chrome"], capture_output=True, text=True)
@@ -153,7 +163,18 @@ def run_checkin(username, password):
         driver.execute_script(EXPAND_POPUP_JS)
         time.sleep(1)
 
-        for attempt in range(5):
+        cf_detected = False
+        for probe in range(3):
+            if has_turnstile_challenge(driver):
+                cf_detected = True
+                break
+            if probe < 2:
+                time.sleep(2)
+
+        if not cf_detected:
+            print("INFO: No Cloudflare challenge detected, continue login directly.")
+
+        for attempt in (range(5) if cf_detected else []):
             driver.execute_script("""
                 var frames = document.querySelectorAll('iframe');
                 for (var i = 0; i < frames.length; i++) {
@@ -172,6 +193,10 @@ def run_checkin(username, password):
                 break
             
             print(f"🖱️ 尝试寻找并物理点击过盾 (第 {attempt + 1} 次)...")
+            if attempt > 0 and not has_turnstile_challenge(driver):
+                print("INFO: Cloudflare challenge not detected now, skip remaining attempts.")
+                break
+
             coords = get_turnstile_coords(driver)
             if coords:
                 os_hardware_click(coords['x'], coords['y'])
